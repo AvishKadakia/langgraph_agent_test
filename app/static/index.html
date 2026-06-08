@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent QA Eval Suite</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --muted:#94a3b8; --fg:#e2e8f0;
+          --pass:#22c55e; --fail:#ef4444; --accent:#3b82f6; --border:#334155; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; justify-content:space-between;
+           padding:14px 22px; border-bottom:1px solid var(--border); background:#0b1220; }
+  header h1 { font-size:17px; margin:0; }
+  main { max-width:1100px; margin:22px auto; padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px;
+          padding:18px; margin-bottom:18px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  select,input[type=number],input[type=file]{ background:#0b1220; color:var(--fg);
+          border:1px solid var(--border); border-radius:7px; padding:8px 10px; min-width:200px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:7px;
+           padding:9px 16px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.secondary { background:#334155; }
+  .badge { padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .badge.ok { background:#064e3b; color:#6ee7b7; } .badge.no { background:#4c0519; color:#fda4af; }
+  .stat { display:inline-block; margin-right:22px; }
+  .stat b { font-size:22px; } .stat span { color:var(--muted); font-size:12px; display:block; }
+  .bar { height:8px; background:#0b1220; border-radius:999px; overflow:hidden; margin:10px 0; }
+  .bar > i { display:block; height:100%; background:var(--accent); width:0; transition:width .3s; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; position:sticky; top:0; background:var(--card); }
+  td.v-PASS { color:var(--pass); font-weight:700; } td.v-FAIL { color:var(--fail); font-weight:700; }
+  .small { color:var(--muted); font-size:12px; }
+  details { cursor:pointer; } details > summary { color:var(--accent); }
+  .diag { white-space:pre-wrap; background:#0b1220; border:1px solid var(--border);
+          border-radius:6px; padding:8px; margin-top:6px; font-size:12px; max-width:520px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 Agent QA Eval Suite</h1>
+  <div id="auth"><span class="small">checking Azure login…</span></div>
+</header>
+
+<main>
+  <div class="card">
+    <div class="small" id="target">Target: …</div>
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label>Test workbook</label>
+        <select id="excel"></select>
+      </div>
+      <div>
+        <label>Sheet (optional)</label>
+        <input id="sheet" type="text" placeholder="defaults to first/Intent Test Cases"
+               style="min-width:240px;background:#0b1220;color:var(--fg);border:1px solid var(--border);border-radius:7px;padding:8px 10px"/>
+      </div>
+      <div>
+        <label>Limit (optional)</label>
+        <input id="limit" type="number" min="1" placeholder="all"/>
+      </div>
+      <button id="runBtn">▶ Run eval</button>
+      <div>
+        <label>Upload a workbook</label>
+        <input id="upload" type="file" accept=".xlsx"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="progressCard" style="display:none">
+    <div>
+      <span class="stat"><b id="sDone">0</b><span>of <i id="sTotal">0</i> done</span></span>
+      <span class="stat"><b id="sPass" style="color:var(--pass)">0</b><span>passed</span></span>
+      <span class="stat"><b id="sFail" style="color:var(--fail)">0</b><span>failed</span></span>
+      <span class="stat"><b id="sRate">–</b><span>pass rate</span></span>
+      <span id="dl"></span>
+    </div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div id="statusLine" class="small"></div>
+    <table>
+      <thead><tr><th>Test ID</th><th>Verdict</th><th>Score</th><th>Why (judge) / Agent self-diagnosis</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let pollTimer = null;
+let running = false;
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.headers.get("content-type")?.includes("json") ? r.json() : r.text();
+}
+
+async function loadAuth() {
+  try {
+    const a = await api("/api/auth");
+    $("#auth").innerHTML = a.logged_in
+      ? `<span class="badge ok">✓ ${a.user || "Azure"}</span> <span class="small">${a.subscription || ""}</span>`
+      : `<span class="badge no">✗ Not logged in</span> <span class="small">run <code>az login</code> on your machine</span>`;
+    $("#runBtn").disabled = running || !a.logged_in;
+  } catch (e) { $("#auth").innerHTML = `<span class="badge no">auth check failed</span>`; }
+}
+
+async function loadConfig() {
+  const c = await api("/api/config");
+  $("#target").textContent = `Target: ${c.url || "(CHAT_API_URL not set)"}  ·  judge auth: ${c.judge_auth}`;
+  if (c.sheet) $("#sheet").placeholder = `defaults to "${c.sheet}"`;
+}
+
+async function loadExcels() {
+  const items = await api("/api/excels");
+  const sel = $("#excel");
+  sel.innerHTML = items.length
+    ? items.map(i => `<option value="${i.name}">${i.name} (${i.size_kb} KB)</option>`).join("")
+    : `<option value="">— no workbooks; upload one —</option>`;
+}
+
+$("#upload").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  try { const r = await api("/api/excels", { method:"POST", body: fd });
+        await loadExcels(); $("#excel").value = r.name; }
+  catch (err) { alert("Upload failed: " + err.message); }
+  e.target.value = "";
+});
+
+$("#runBtn").addEventListener("click", async () => {
+  const excel = $("#excel").value;
+  if (!excel) { alert("Pick or upload a workbook first."); return; }
+  const body = { excel, sheet: $("#sheet").value || null, limit: $("#limit").value || null };
+  running = true;
+  $("#runBtn").disabled = true;
+  $("#runBtn").textContent = "⏳ Running…";
+  $("#rows").innerHTML = ""; $("#dl").innerHTML = "";
+  $("#progressCard").style.display = "block";
+  $("#statusLine").textContent = "starting…";
+  try {
+    const { run_id } = await api("/api/run", {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    poll(run_id);
+  } catch (e) { $("#statusLine").textContent = "Failed to start: " + e.message; finishRun(); }
+});
+
+function finishRun() {
+  running = false;
+  $("#runBtn").disabled = false;
+  $("#runBtn").textContent = "▶ Run eval";
+}
+
+function esc(s){ return (s||"").toString().replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function render(state) {
+  $("#sTotal").textContent = state.total || 0;
+  $("#sDone").textContent  = state.done || 0;
+  $("#sPass").textContent  = state.passed || 0;
+  $("#sFail").textContent  = state.failed || 0;
+  const pct = state.total ? Math.round(100 * state.done / state.total) : 0;
+  $("#barFill").style.width = pct + "%";
+  if (state.pass_rate != null) $("#sRate").textContent = state.pass_rate + "%";
+
+  $("#rows").innerHTML = (state.rows || []).map(r => {
+    const reason = r.failure_stage
+      ? `<span class="small">⚠ ${esc(r.failure_stage)} error</span>`
+      : esc(r.judge_reason);
+    const diag = r.agent_failure_reasoning
+      ? `<details><summary>agent self-diagnosis</summary><div class="diag">${esc(r.agent_failure_reasoning)}</div></details>` : "";
+    return `<tr>
+      <td>${esc(r.test_id)}</td>
+      <td class="v-${esc(r.verdict)}">${esc(r.verdict)}</td>
+      <td>${r.score ?? ""}</td>
+      <td>${reason}${diag}</td></tr>`;
+  }).join("");
+
+  if (state.status === "running" || state.status === "starting")
+    $("#statusLine").textContent = `running case ${state.done}/${state.total}…`;
+  else if (state.status === "done") {
+    $("#statusLine").textContent = `✓ complete`;
+    if (state.result_file)
+      $("#dl").innerHTML = `<a href="/api/download/${encodeURIComponent(state.result_file)}">⬇ Download results .xlsx</a>`;
+  } else if (state.status === "error")
+    $("#statusLine").textContent = "✗ error: " + (state.error || "unknown");
+}
+
+function poll(runId) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const state = await api("/api/run/" + runId);
+      render(state);
+      if (state.status === "done" || state.status === "error") {
+        clearInterval(pollTimer); finishRun(); loadExcels();
+      }
+    } catch (e) { /* keep polling */ }
+  }, 1500);
+}
+
+async function resumeActive() {
+  // On (re)load, reconnect to an in-progress (or most recent) run so a refresh
+  // mid-eval doesn't lose progress.
+  try {
+    const state = await api("/api/active");
+    if (!state || !state.run_id) return;
+    $("#progressCard").style.display = "block";
+    render(state);
+    if (state.status === "running" || state.status === "starting") {
+      running = true;
+      $("#runBtn").disabled = true;
+      $("#runBtn").textContent = "⏳ Running…";
+      poll(state.run_id);
+    }
+  } catch (e) { /* no active run */ }
+}
+
+loadAuth(); loadConfig();
+loadExcels().then(resumeActive);
+setInterval(loadAuth, 30000);
+</script>
+</body>
+</html>

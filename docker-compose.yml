@@ -1,0 +1,17 @@
+services:
+  eval:
+    build: .
+    container_name: agent-eval-suite
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    env_file:
+      - .env
+    volumes:
+      # Reuse the host's `az login` session (token cache) inside the container.
+      - "${HOME}/.azure:/root/.azure"
+      # App code: lets UI tweaks reflect on refresh (HTML) or `make restart` (Python).
+      - "./app:/app/app"
+      # Drop test workbooks here and pick up results on the host.
+      - "./test_excels:/app/test_excels"
+      - "./results:/app/results"
+    restart: unless-stopped
