@@ -1,3 +1,6 @@
+###
+
+
 # 🧪 Agent QA Eval Suite
 
 A self-contained web app for the QA team to run Excel-driven evaluations against
@@ -5,7 +8,8 @@ the deployed agent, score each case with an LLM judge, and download a results
 workbook — including, for every failure, the agent's own **self-diagnosis** of
 why it failed.
 
-
+No Python, tokens, or scripts to manage. Clone → `az login` → `make up` → open
+the browser.
 
 ---
 
@@ -13,12 +17,15 @@ why it failed.
 
 ```bash
 # 1. Clone and enter the repo
-git clone <repo-url> && cd agent-eval-suite
+git clone https://github.com/AvishKadakia/langgraph_agent_test.git && cd agent-eval-suite
 
-# 2. Log in to Azure (once; the app reuses this session)
+# 2. Add the .env file
+.env
+
+# 3. Log in to Azure (once; the app reuses this session)
 make login          # or: az login
 
-# 3. Start the app
+# 4. Start the app
 make up              # builds the container and starts it
 
 # 4. Open the UI
