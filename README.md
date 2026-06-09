@@ -1,60 +1,52 @@
-###
-
-
 # 🧪 Agent QA Eval Suite
 
-A self-contained web app for the QA team to run Excel-driven evaluations against
-the deployed agent, score each case with an LLM judge, and download a results
-workbook — including, for every failure, the agent's own **self-diagnosis** of
-why it failed.
-
-No Python, tokens, or scripts to manage. Clone → `az login` → `make up` → open
-the browser.
+A self-contained web app to run Excel-driven evaluations against the deployed
+agent, score each case with an LLM judge, and download a results workbook —
+including, for every failure, the agent's own **self-diagnosis** of why it failed.
 
 ---
 
-## Quick start
+## ✅ Easiest way to run it (no make, no Docker)
+
+For anyone — including non-developers. You only need two things installed once:
+
+1. **Azure CLI** — https://learn.microsoft.com/cli/azure/install-azure-cli
+2. **Python 3** — https://www.python.org/downloads/ (on Windows, tick *“Add
+   python.exe to PATH”* during install)
+
+Then:
+
+| Your computer | What to do |
+|---------------|------------|
+| **macOS**     | Double-click **`run.command`** |
+| **Windows**   | Double-click **`run.bat`** |
+
+The first launch sets everything up (about a minute) and signs you in to Azure
+in your browser. After that it starts in seconds and opens
+**http://localhost:8080** automatically. Keep the little window open while you
+use the app; close it to stop.
+
+> macOS may say *“cannot be opened because it is from an unidentified
+> developer.”* Right-click `run.command` → **Open** → **Open** (once).
+
+In the browser:
+
+1. Check the top-right badge shows **✓ signed in** (if not, the launcher will run
+   `az login` for you).
+2. Pick a **test workbook** (or **Upload** a new `.xlsx`).
+3. Click **▶ Run eval** and watch cases stream in live.
+4. Click **⬇ Download results .xlsx** when it finishes.
+
+---
+
+## 🛠 Developer way (Docker + make)
 
 ```bash
-# 1. Clone and enter the repo
-git clone https://github.com/AvishKadakia/langgraph_agent_test.git && cd agent-eval-suite
-
-# 2. Add the .env file
-.env
-
-# 3. Log in to Azure (once; the app reuses this session)
-make login          # or: az login
-
-# 4. Start the app
-make up              # builds the container and starts it
-
-# 4. Open the UI
-#    http://localhost:8080   (or: make open)
+az login            # once
+make up             # build + start the container
+make open           # http://localhost:8080
+make down           # stop
 ```
-
-That's it. In the browser:
-
-1. Confirm the top-right badge shows **✓ logged in** (if not, run `make login`).
-2. Pick a **test workbook** (or click **Upload** to add a new `.xlsx`).
-3. Click **▶ Run eval**.
-4. Watch cases stream in live (PASS/FAIL, score, judge reason, and an expandable
-   **agent self-diagnosis** on failures).
-5. Click **⬇ Download results .xlsx** when it finishes.
-
-Stop the app with `make down`.
-
----
-
-## Folders
-
-| Folder         | Purpose                                                            |
-|----------------|--------------------------------------------------------------------|
-| `test_excels/` | Input workbooks. Drop `.xlsx` files here (or upload via the UI).   |
-| `results/`     | Output. Each run writes `results_<workbook>_<timestamp>.xlsx`.     |
-| `app/`         | The application (backend + UI). You don't need to touch this.      |
-
-Both folders are mounted into the container, so files you add/receive show up on
-your machine too.
 
 ---
 
@@ -62,82 +54,75 @@ your machine too.
 
 For each row in the workbook:
 
-1. **Ask the agent** — sends the `User Query` to the deployed `/chat` API.
+1. **Ask the agent** — sends the `User Query` to the agent's `/chat` API
+   (authenticated as you, via `az login`).
 2. **Judge it** — an LLM judge compares the answer to the row's expected
    intent / route / incidents / output and returns **PASS** or **FAIL** with a
    reason and score.
-3. **Diagnose failures** — on FAIL, the agent is re-asked (in the same session)
-   *why* it failed; its root-cause explanation is saved to the
-   **Agent Failure Reasoning** column.
+3. **Diagnose failures** — on FAIL, the agent is re-asked *why* it failed; its
+   root-cause explanation is saved to the **Agent Failure Reasoning** column.
 
 Runs are **sequential** by design (the agent currently errors under parallel
-load). Expect roughly 30–45 s per case.
+load). Expect roughly 30–45 s per case. The results workbook has four sheets:
+**Summary**, **All Results**, **PASS**, **FAIL**.
 
-The results workbook has four sheets: **Summary**, **All Results**, **PASS**,
-**FAIL**.
+---
+
+## Folders
+
+| Folder         | Purpose                                                          |
+|----------------|------------------------------------------------------------------|
+| `test_excels/` | Input workbooks. Drop `.xlsx` files here (or upload via the UI). |
+| `results/`     | Output. Each run writes `results_<workbook>_<timestamp>.xlsx`.   |
+| `app/`         | The application (backend + UI). You don't need to touch this.    |
 
 ---
 
 ## Workbook format
 
 The judge reads these columns (first sheet, or the one named in `DEFAULT_SHEET`):
-
 `Test ID`, `User Query`, `Expected Intent`, `Route To`,
 `Data Source (Resolved)`, `STTM Lookup Required?`,
-`Expected Incident Numbers Returned`, `Expected Output Summary`
+`Expected Incident Numbers Returned`, `Expected Output Summary`.
 
-A row needs at least `Test ID` and `User Query` to run. A sample workbook is
-included in `test_excels/`.
+A row needs at least `Test ID` and `User Query` to run. A sample workbook is in
+`test_excels/`.
 
 ---
 
 ## Configuration
 
-Settings live in `.env` (created from `.env.example` on first `make up`). The
-defaults already point at the **dev** agent. To test a different environment,
-change `CHAT_API_URL` (and `CHAT_API_SCOPE` if the API's audience differs).
+Settings live in `.env` (copied from `.env.example` on first run). Defaults point
+at the dev agent; change `CHAT_API_URL` (and `CHAT_API_SCOPE` if the audience
+differs) to test another environment.
 
-| Variable                       | What it does                                            |
-|--------------------------------|---------------------------------------------------------|
-| `CHAT_API_URL`                 | Base URL of the agent to test.                          |
-| `CHAT_API_SCOPE`               | Entra scope for the agent token (minted from az login). |
-| `AZURE_OPENAI_ENDPOINT`        | Azure OpenAI resource used by the judge.                |
-| `AZURE_OPENAI_CHAT_DEPLOYMENT` | Judge model deployment name.                            |
-| `AZURE_OPENAI_API_KEY`         | Optional. Leave blank to use az login (AAD) for the judge. |
-| `APP_PORT`                     | Port for the UI (default 8080).                         |
+| Variable                       | What it does                                              |
+|--------------------------------|-----------------------------------------------------------|
+| `CHAT_API_URL`                 | Base URL of the agent to test.                            |
+| `CHAT_API_SCOPE`               | Entra scope for the agent token (minted from `az login`). |
+| `AZURE_OPENAI_ENDPOINT`        | Azure OpenAI resource used by the judge.                  |
+| `AZURE_OPENAI_CHAT_DEPLOYMENT` | Judge model deployment name.                              |
+| `AZURE_OPENAI_API_KEY`         | Optional. Leave blank to use `az login` (AAD).            |
+| `APP_PORT`                     | Port for the UI (default 8080).                           |
 
 ---
 
 ## Authentication
 
-How the eval authenticates depends on the `CHAT_API_URL` target:
+Everything uses your **`az login`** — one sign-in covers both the agent and the
+judge. The launcher runs it for you; if the badge ever shows *not signed in*,
+just run `az login` again.
 
-- **`agent-web-ui` (the Auth.js web UI):** it uses a browser **session cookie**,
-  not a bearer token, and serves the agent at `POST /api/chat`. `make up` runs
-  `make cookie`, which reads the cookie from your logged-in Chrome and injects it
-  into the container (as `CHAT_API_COOKIE`). So: **log into the web UI in Chrome
-  first**, then `make up`. The cookie expires with your browser session — after
-  re-logging in, run `make restart` (or `make cookie && make up`) to refresh it.
-  Inside the container there is no Chrome, so if auto-capture can't run, paste the
-  cookie into `.env` as `CHAT_API_COOKIE` manually.
-- **Bearer `/chat` backends** (e.g. `langraph-agent-orchestration`,
-  `nfcu-chat-agent-dev`): no cookie needed. The backend mints short-lived tokens
-  from your local `az login` (`~/.azure` is mounted into the container). Run
-  `make login` if needed.
-
-> The judge uses `az login` (AAD) by default. This requires your account to
-> have the **Cognitive Services OpenAI User** role on the Azure OpenAI resource.
-> If you don't have that, set `AZURE_OPENAI_API_KEY` in `.env` instead.
+> The judge uses `az login` (AAD) by default, which needs the **Cognitive
+> Services OpenAI User** role on the Azure OpenAI resource. If you don't have it,
+> set `AZURE_OPENAI_API_KEY` in `.env` instead.
 
 ---
 
-## Make targets
+## Troubleshooting
 
-```
-make up        Build and start the app
-make down      Stop the app
-make login     az login
-make logs      Follow logs
-make open      Open the UI
-make restart   Restart the app
-```
+- **“Python 3 / Azure CLI is required”** — install the missing one (links above)
+  and re-launch.
+- **Badge says not signed in** — run `az login` (or just re-launch).
+- **`401`/`403` on a case** — your Azure session expired; `az login` again.
+- **Want a clean reinstall** — delete the `.venv` folder and re-launch.

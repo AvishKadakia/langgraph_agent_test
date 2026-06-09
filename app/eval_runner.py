@@ -9,14 +9,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import sqlite3
-import subprocess
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 import requests
 from openai import AzureOpenAI
@@ -48,101 +44,17 @@ def get_agent_token() -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Agent auth
+# Agent auth — bearer token against the agent's /chat API.
 #
-# The deployed agent is fronted by the `agent-web-ui` app, which uses Auth.js
-# (NextAuth) session cookies — NOT bearer tokens — and exposes the agent on its
-# BFF route `POST /api/chat`. So we authenticate "like the browser": send the
-# session cookie and call `/api/chat`. The cookie is sourced from CHAT_API_COOKIE
-# (set this when running in the container) or auto-read from the local Chrome
-# profile. As a fallback, if no cookie is available we use a bearer token against
-# `/chat` (for a backend that speaks that protocol directly).
+# The token is your `az login` (or an explicit CHAT_API_TOKEN). Run `az login`
+# once; tokens are minted/refreshed on demand for CHAT_API_SCOPE.
 # --------------------------------------------------------------------------- #
 def resolve_agent_auth(base_url: str) -> dict[str, Any]:
-    cookie = os.getenv("CHAT_API_COOKIE") or _extract_browser_cookie(base_url)
-    if cookie:
-        return {"mode": "cookie", "headers": {"Cookie": cookie}, "chat_path": "/api/chat"}
     return {
         "mode": "bearer",
         "headers": {"Authorization": f"Bearer {get_agent_token()}"},
         "chat_path": "/chat",
     }
-
-
-def _extract_browser_cookie(base_url: str) -> str | None:
-    """Best-effort: read the session cookie(s) for ``base_url``'s host from the
-    local Chrome cookie store (macOS) and return them as a ``Cookie`` header.
-
-    Returns None if Chrome / the Keychain key aren't available (e.g. inside the
-    container) — set ``CHAT_API_COOKIE`` in that case. Any failure degrades to
-    None rather than raising, so the bearer fallback still applies."""
-    host = urlparse(base_url).hostname
-    if not host:
-        return None
-    db = Path.home() / "Library/Application Support/Google/Chrome/Default/Cookies"
-    if not db.exists():
-        return None
-    # Retry: copying the (locked) cookie DB or the Keychain lookup can transiently
-    # fail. A silent bearer fallback against a cookie-only host would 405, so it is
-    # worth a couple of attempts before giving up.
-    last_exc: Exception | None = None
-    for _attempt in range(3):
-        try:
-            return _read_chrome_cookie(db, host)
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-    _ = last_exc  # extraction unavailable (e.g. in the container) — caller falls back
-    return None
-
-
-def _read_chrome_cookie(db: Path, host: str) -> str | None:
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.primitives.hashes import SHA1
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
-    pw = subprocess.run(
-        ["security", "find-generic-password", "-ws", "Chrome Safe Storage"],
-        capture_output=True, text=True, timeout=20,
-    ).stdout.strip().encode()
-    if not pw:
-        raise RuntimeError("empty Chrome Safe Storage key")
-    key = PBKDF2HMAC(
-        algorithm=SHA1(), length=16, salt=b"saltysalt",
-        iterations=1003, backend=default_backend(),
-    ).derive(pw)
-
-    tmp = Path("/tmp/.eval_chrome_cookies.db")
-    shutil.copy(db, tmp)
-    con = sqlite3.connect(tmp)
-    try:
-        rows = con.execute(
-            "SELECT name, encrypted_value FROM cookies WHERE host_key = ?", (host,)
-        ).fetchall()
-    finally:
-        con.close()
-
-    def _decrypt(ev: bytes) -> str | None:
-        if not ev:
-            return None
-        if ev[:3] in (b"v10", b"v11"):
-            ev = ev[3:]
-        dec = Cipher(
-            algorithms.AES(key), modes.CBC(b" " * 16), backend=default_backend()
-        ).decryptor()
-        pt = dec.update(ev) + dec.finalize()
-        pt = pt[: -pt[-1]]  # strip PKCS#7 padding
-        try:
-            return pt.decode("utf-8")
-        except UnicodeDecodeError:
-            return pt[32:].decode("utf-8", "ignore")  # newer Chrome prepends a 32-byte domain hash
-
-    pairs = []
-    for name, ev in rows:
-        val = _decrypt(ev)
-        if val:
-            pairs.append(f"{name}={val}")
-    return "; ".join(pairs) or None
 
 
 def judge_client() -> AzureOpenAI:
@@ -228,23 +140,14 @@ def call_chat_route(base_url: str, auth: dict[str, Any], case: dict[str, Any]) -
             ),
         },
         timeout=240,
-        allow_redirects=False,  # a redirect means auth failed (e.g. bounced to /api/auth/login)
+        allow_redirects=False,  # a redirect means auth failed (e.g. token rejected)
     )
     if resp.status_code != 200:
-        raise RuntimeError(_chat_error(resp, auth))
+        msg = f"HTTP {resp.status_code}: {resp.text[:500]}"
+        if resp.status_code in (401, 403):
+            msg += " — your Azure login may be missing or expired. Run `az login` and retry."
+        raise RuntimeError(msg)
     return resp.json()
-
-
-def _chat_error(resp: requests.Response, auth: dict[str, Any]) -> str:
-    """Build an error message, adding a hint when a cookie session looks expired."""
-    msg = f"HTTP {resp.status_code}: {resp.text[:500]}"
-    redirected_to_login = "auth/login" in resp.headers.get("location", "")
-    if auth["mode"] == "cookie" and (resp.status_code in (401, 403) or 300 <= resp.status_code < 400 or redirected_to_login):
-        msg += (
-            " — the browser session cookie is missing/expired. Log in to the web UI "
-            "again, then set CHAT_API_COOKIE (or re-run locally to auto-read Chrome)."
-        )
-    return msg
 
 
 # --------------------------------------------------------------------------- #

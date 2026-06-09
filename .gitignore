@@ -1,6 +1,5 @@
 .env
-.env.cookie
-.env.cookie.tmp
+.venv/
 results/*.xlsx
 __pycache__/
 *.pyc
