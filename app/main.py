@@ -66,6 +66,14 @@ def config() -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 @app.get("/api/auth")
 def auth_status() -> dict[str, Any]:
+    # The agent is reached via the web UI's session cookie (browser-style auth),
+    # not az login. Report that when a cookie is available; otherwise fall back
+    # to the az login check used by the bearer-token path.
+    base_url = (os.getenv("CHAT_API_URL") or "").rstrip("/")
+    if os.getenv("CHAT_API_COOKIE"):
+        return {"logged_in": True, "user": "browser session", "subscription": "via CHAT_API_COOKIE"}
+    if base_url and eval_runner._extract_browser_cookie(base_url):
+        return {"logged_in": True, "user": "browser session", "subscription": "via local Chrome"}
     try:
         out = subprocess.run(
             ["az", "account", "show", "-o", "json"],

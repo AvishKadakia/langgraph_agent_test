@@ -1,0 +1,7 @@
+.env
+.env.cookie
+.env.cookie.tmp
+results/*.xlsx
+__pycache__/
+*.pyc
+.DS_Store

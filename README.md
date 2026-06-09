@@ -110,12 +110,22 @@ change `CHAT_API_URL` (and `CHAT_API_SCOPE` if the API's audience differs).
 
 ## Authentication
 
-The app reuses your local `az login` — no tokens to paste. Your `~/.azure`
-session is mounted into the container, and the backend mints short-lived tokens
-from it on demand (auto-refreshing). If the UI shows **Not logged in**, run
-`make login` and refresh.
+How the eval authenticates depends on the `CHAT_API_URL` target:
 
-> The judge uses the same login by default (AAD). This requires your account to
+- **`agent-web-ui` (the Auth.js web UI):** it uses a browser **session cookie**,
+  not a bearer token, and serves the agent at `POST /api/chat`. `make up` runs
+  `make cookie`, which reads the cookie from your logged-in Chrome and injects it
+  into the container (as `CHAT_API_COOKIE`). So: **log into the web UI in Chrome
+  first**, then `make up`. The cookie expires with your browser session — after
+  re-logging in, run `make restart` (or `make cookie && make up`) to refresh it.
+  Inside the container there is no Chrome, so if auto-capture can't run, paste the
+  cookie into `.env` as `CHAT_API_COOKIE` manually.
+- **Bearer `/chat` backends** (e.g. `langraph-agent-orchestration`,
+  `nfcu-chat-agent-dev`): no cookie needed. The backend mints short-lived tokens
+  from your local `az login` (`~/.azure` is mounted into the container). Run
+  `make login` if needed.
+
+> The judge uses `az login` (AAD) by default. This requires your account to
 > have the **Cognitive Services OpenAI User** role on the Azure OpenAI resource.
 > If you don't have that, set `AZURE_OPENAI_API_KEY` in `.env` instead.
 

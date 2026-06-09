@@ -1,11 +1,14 @@
 services:
   eval:
     build: .
-    container_name: agent-eval-suite
+    container_name: langgraph-agent-test
     ports:
       - "${APP_PORT:-8080}:8080"
     env_file:
       - .env
+      # Holds CHAT_API_COOKIE captured from the host browser (see `make cookie`).
+      # Loaded after .env so it overrides; empty when no cookie is needed.
+      - .env.cookie
     volumes:
       # Reuse the host's `az login` session (token cache) inside the container.
       - "${HOME}/.azure:/root/.azure"
